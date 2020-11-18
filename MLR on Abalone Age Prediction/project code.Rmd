@@ -1,0 +1,426 @@
+---
+output: 
+  pdf_document:
+    latex_engine: xelatex
+documentclass:
+  article
+classoption: 
+  letter paper
+header-includes:
+  - \usepackage{setspace}\singlespacing
+  - \setcounter{page}{15}
+fontsize:
+  11pt
+geometry: 
+  margin=1.2in
+mainfont:
+  Times
+sansfont:
+  Times
+monofont:
+  Times
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(width = 110)
+```
+
+## Appendix B \quad RCodes and Outputs
+
+```{r library, include=FALSE}
+library(MASS)
+library(stats)
+library(leaps)
+library(Matrix)
+library(glmnet)
+```
+### Exploratory Data Analysis
+```{r}
+#import data
+abalone<- read.csv("~/Desktop/Project/abalone/abalone.txt", header=FALSE)
+names(abalone)<-c("Sex","Length","Diameter","Height","Whole_weight","Shucked_weight",
+                  "Viscera_weight","Shell_weight","Rings")
+#calculate age using rings
+abalone_age<-cbind(abalone[,-9],"Age"=abalone$Rings+1.5)
+#check data type
+sapply(abalone_age,class)
+#check missing data
+sum(is.na(abalone_age))
+#summary data
+summary(abalone_age)
+#distribution of response variable
+par(mfrow=c(2,2))
+hist(abalone_age$Age)
+hist(abalone_age$Age^0.5)
+hist(abalone_age$Age^(-1))
+hist(log(abalone_age$Age))
+#distribution of response variable
+boxcox(Age ~ ., data = abalone_age)
+#use log transformation
+abalone_log_age<-cbind(abalone_age[,-9],log_age=log(abalone_age$Age))
+#distribution of quantitive variables 
+par(mfrow=c(2,4))
+sapply(names(abalone_log_age)[2:8],function(x) hist(abalone_log_age[[x]],main = x,xlab =""))
+#distribution of categorical variable
+par(mfrow=c(1,2))
+lbls=c("F","I","M")
+pct=round(100*table(abalone_log_age$Sex)/4177)
+lab=paste(lbls,pct)
+lab=paste(lab,"%",sep="")
+pie(table(abalone_log_age$Sex),labels=lab,main="Sex")
+boxplot(abalone_log_age$log_age~abalone_log_age$Sex,main='side by side boxplots',
+        xlab='Sex',ylab='log_age')
+#scatter plot matrix
+pairs(abalone_log_age[!sapply(abalone_log_age,class)=='factor'])
+#split the data into train and test
+abalone.s<-abalone_log_age
+set.seed(1234) 
+n.s=nrow(abalone.s) 
+index.s=sample(1: n.s, size=n.s/5, replace=FALSE)#randomly sample 80% cases
+abalone.v=abalone.s[index.s,]  ## training data set 
+abalone.t=abalone.s[-index.s,] ## validation set.
+n=nrow(abalone.t)
+abaloneo.t <- abalone_age[index.s,]
+abaloneo.v <- abalone_age[-index.s,]
+#simple factor anova on Sex
+boxplot(abalone.t$log_age~abalone.t$Sex)
+abnovamodel <- lm(log_age~Sex, data = abalone.t)
+par(mfrow=c(1,2))
+plot(abnovamodel,which = 1)
+plot(abnovamodel,which = 2)
+summary(abnovamodel)
+#plot training data set againt validation data set
+dt = abalone.t
+dv = abalone.v
+dt$tv="train"
+dv$tv="validation"
+dall=rbind(dt,dv)
+names = names(abalone.s)
+names = names[names!= "Sex"]
+par(mfrow=c(2,4))
+for(name in names)
+{
+  boxplot(dall[[name]]~dall$tv,main=name,
+          xlab='train',ylab='validation',col=c("blue","green"))
+}
+#Correlationa and VIF
+cor(abaloneo.t[2:9])
+rxx<-cor(abaloneo.t[2:8])
+rxxI<-solve(rxx)
+(vif<-diag(rxxI))
+```
+
+### Model Building and Diagnostic
+```{r}
+#first-order model
+fit1 = lm(log_age ~., data = abalone.t)
+summary(fit1)
+#first-order subset
+library(leaps)
+sub_set <- regsubsets(log_age~., data=abalone.t, nbest=1,nvmax=9, method="exhaustive")
+sum_sub <- summary(sub_set)
+p.m <- as.integer(rownames(sum_sub$which))+1
+ssto <- sum((abalone.t$log_age-mean(abalone.t$log_age))^2)
+sse <- (1-sum_sub$rsq)*ssto
+aic <- n*log(sse/n)+2*p.m
+bic <- n*log(sse/n)+log(n)*p.m
+res_sub <- cbind(sum_sub$which, sse, sum_sub$rsq, sum_sub$adjr2,sum_sub$cp, bic, aic)
+colnames(res_sub) <- c(colnames(sum_sub$which),"sse", "R^2", "R^2_a", "Cp","bic", "aic")
+res_sub
+#Stepwise
+library(MASS)
+fit0<-lm(log_age~1,data=abalone.t)
+model_1_fs_aic<-stepAIC(fit0,scope=list(upper=fit1,lower=~1),direction = "both",k=2,trace = FALSE)
+model_1_fs_bic<-stepAIC(fit0,scope=list(upper=fit1,lower=~1),direction = "both",k=log(n),trace = FALSE)
+model_1_f_aic<-stepAIC(fit0,scope=list(upper=fit1,lower=~1),direction = "forward",k=2,trace = FALSE)
+model_1_f_bic<-stepAIC(fit0,scope=list(upper=fit1,lower=~1),direction = "forward",k=log(n),trace = FALSE)
+model_1_b_aic<-stepAIC(fit1,scope=list(upper=fit1,lower=~1),direction = "back",k=2,trace = FALSE)
+model_1_b_bic<-stepAIC(fit1,scope=list(upper=fit1,lower=~1),direction = "back",k=log(n),trace = FALSE) 
+model_1_bs_aic<-stepAIC(fit1,scope=list(upper=fit1,lower=~1),direction = "both",k=2,trace = FALSE) 
+model_1_bs_bic<-stepAIC(fit1,scope=list(upper=fit1,lower=~1),direction = "both",k=log(n),trace = FALSE) 
+#diagnostic
+par(mfrow=c(2,3))
+plot(fit1,which=1)
+plot(fit1,which=2)
+plot(fit1,which=5)
+plot(model_1_b_bic,which=1)
+plot(model_1_b_bic,which=2)
+plot(model_1_b_bic,which=5)
+#summary
+fmodel1t <- model_1_b_bic
+fmodel2t <- fit1
+summary(fmodel1t)
+summary(fmodel2t)
+#Second order: add interaction and quadratic terms
+#center
+abalone.s_c<-cbind(Sex=abalone.s[,1],as.data.frame(
+  sapply(abalone.s[,2:8],function(x) x-mean(x))),log_age=abalone.s[,9])
+abalone.v_c=abalone.s_c[index.s,]  
+abalone.t_c=abalone.s_c[-index.s,]
+#fit with all terms
+fit2 = lm(log_age ~ .+.^2+I(Length^2)+I(Diameter^2)+I(Height^2)+I(Whole_weight^2)+
+            I(Shucked_weight^2)+I(Viscera_weight^2)+I(Shell_weight^2), data =abalone.t_c)
+summary(fit2)
+#Stepwise
+model_2_fs_aic<-stepAIC(fit0,scope=list(upper=fit2,lower=~1),direction = "both",k=2,trace = FALSE) 
+model_2_fs_bic<-stepAIC(fit0,scope=list(upper=fit2,lower=~1),direction ="both",k=log(n),trace = FALSE)
+model_2_f_aic<-stepAIC(fit0,scope=list(upper=fit2,lower=~1),direction = "forward",k=2,trace = FALSE) 
+model_2_f_bic<-stepAIC(fit0,scope=list(upper=fit2,lower=~1),direction = "forward",k=log(n),trace = FALSE) 
+model_2_b_aic<-stepAIC(fit2,scope=list(upper=fit2,lower=~1),direction = "back",k=2,trace = FALSE) 
+model_2_b_bic<-stepAIC(fit2,scope=list(upper=fit2,lower=~1),direction = "back",k=log(n),trace = FALSE) 
+model_2_bs_aic<-stepAIC(fit2,scope=list(upper=fit2,lower=~1),direction = "both",k=2,trace = FALSE) 
+model_2_bs_bic<-stepAIC(fit2,scope=list(upper=fit2,lower=~1),direction = "both",k=log(n),trace = FALSE)  
+#diagnostic
+par(mfrow=c(2,3))
+plot(model_2_fs_bic,which=1) 
+plot(model_2_f_bic,which=1) 
+plot(model_2_b_bic,which=1)
+plot(model_2_fs_bic,which=2)
+plot(model_2_f_bic,which=2)
+plot(model_2_b_bic,which=2)
+
+plot(model_2_fs_aic,which=1) 
+plot(model_2_f_aic,which=1) 
+plot(model_2_b_aic,which=1) 
+plot(model_2_fs_aic,which=2)
+plot(model_2_f_aic,which=2)
+plot(model_2_b_aic,which=2)
+
+fmodel3t <- model_2_fs_bic
+fmodel4t <- model_2_f_bic
+fmodel5t <- model_2_b_bic
+fmodel6t <- model_2_fs_aic
+fmodel7t <- model_2_f_aic
+fmodel8t <- model_2_b_aic
+```
+
+### Model Validation
+```{r}
+#fit the model with validation data
+fmodel1v <- lm(formula(model_1_b_bic),data = abalone.v)
+fmodel2v <- lm(formula(fit1),data = abalone.v)
+fmodel3v <- lm(formula(model_2_fs_bic),data = abalone.v_c)
+fmodel4v <- lm(formula(model_2_f_bic),data = abalone.v_c)
+fmodel5v <- lm(formula(model_2_b_bic),data = abalone.v_c)
+fmodel6v <- lm(formula(model_2_fs_aic),data = abalone.v_c)
+fmodel7v <- lm(formula(model_2_f_aic),data = abalone.v_c)
+fmodel8v <- lm(formula(model_2_b_aic),data = abalone.v_c)
+#check criterions
+sigma <- anova(fit2)['Residuals',3]
+sigma
+for(i in 1:8){
+  print(paste("fmodel",i,sep=''))
+  modelname_t <- get(paste("fmodel",i,'t',sep=''))
+  modelname_v <- get(paste("fmodel",i,'v',sep=''))
+  
+  #compare coefficient estimator
+  est <- cbind(summary(modelname_t)$coefficients[,1:2],summary(modelname_v)$coefficients[,1:2])
+  colnames(est) <- c("training_est","training_std","validation_est","validation_std")
+  print(est)
+  
+  #various criteria
+  vali_summary<-matrix(NA,nrow=2,ncol=8)
+  rownames(vali_summary)<-c("training","validation")
+  colnames(vali_summary)<-c("SSE","MSE","Cp","Pressp","SSE/n","Pressp/n","MSPE","p")
+
+  vali_summary[1,2] <- anova(modelname_t)['Residuals',3] #mse train
+  vali_summary[1,1] <- anova(modelname_t)['Residuals',2] #sse train
+  vali_summary[1,3] <- vali_summary[1,1]/sigma-n+2*length(modelname_t$coefficients) #cp train
+  vali_summary[1,8] <- length(modelname_t$coefficients) #p
+  vali_summary[1,4] <- sum(modelname_t$residuals^2/(1-influence(modelname_t)$hat)^2) #pressp train
+  vali_summary[1,5] <- vali_summary[1,1]/n
+  vali_summary[1,6] <- vali_summary[1,4]/n
+  vali_summary[2,2] <- anova(modelname_v)['Residuals',3] #mse vali
+  vali_summary[2,1] <- anova(modelname_v)['Residuals',2] #sse vali
+  if(i==1|i==2){
+    vali_summary[2,7] <- mean((predict.lm(modelname_t,abalone.v)-abalone.v$log_age)^2) #mspe
+  }
+  else{
+    vali_summary[2,7] <- mean((predict.lm(modelname_t,abalone.v_c)-abalone.v$log_age)^2) #mspe
+  }
+  print(vali_summary)
+}
+```
+
+### Model Finalization
+```{r}
+#choose model 5 and regress on whole data set
+model_chosen<-lm(formula(fmodel5t),data = abalone.s_c)
+summary(model_chosen)
+par(mfrow=c(1,2))
+plot(model_chosen,which=1)
+plot(model_chosen,which=2)
+#Y outliers
+stu.res.del <- studres(model_chosen)
+a <- 0.05
+p <- length(model_chosen$coefficients)
+(bonthre <- qt(1-a/(2*n.s),n.s-p-1))
+for (i in 1:length(stu.res.del)) {
+  if(abs(stu.res.del[i]) > bonthre){
+    print(i)
+  }
+}
+#X outliers
+hh <- influence(model_chosen)$hat
+(hth <- 2*p/n.s)
+(xout <- as.vector(which(hh > hth)))
+#influential cases
+stu.res <- model_chosen$residuals/(1-hh)
+d <- stu.res^2*hh/(p*(1-hh))
+dth <- 4/(n.s-p)
+(dout <- as.vector(which(d > dth)))
+#drop the influential cases and refit the model
+data <- abalone.s_c[-dout,]
+model_final<-lm(formula(fmodel5t),data = data)
+summary(model_final)
+par(mfrow=c(1,3))
+plot(model_final,which=1)
+plot(model_final,which=2)
+plot(model_final,which=5)
+```
+
+### Additional Methods: Data Preparation
+```{r}
+#first-order
+abalone_ridge.s <- cbind(SexI=as.numeric(abalone.s$Sex=="I"),SexM=as.numeric(abalone.s$Sex=="M"),abalone.s[,2:9])
+abalone_ridge.t <- abalone_ridge.s[-index.s,]
+abalone_ridge.v <- abalone_ridge.s[index.s,]
+
+#second-order
+abalone_ridge.s_second<-abalone_ridge.s[,-10]
+for (i in 1:9) {
+  name1<-names(abalone_ridge.s)[i]
+  for(j in i:9){
+    name2<-names(abalone_ridge.s)[j]
+    newdf<-data.frame(abalone_ridge.s[,i]*abalone_ridge.s[,j])
+    names(newdf)<-paste(name1,name2,sep = ":")
+    abalone_ridge.s_second<-cbind(abalone_ridge.s_second,newdf)
+    names(newdf)
+  }
+}
+drop <- c("SexI:SexI","SexM:SexM","SexI:SexM")
+abalone_ridge.s_second = abalone_ridge.s_second[,!(names(abalone_ridge.s_second) %in% drop)]
+abalone_ridge.s_second = cbind(abalone_ridge.s_second,abalone_ridge.s[,10])
+abalone_ridge.t_second <- abalone_ridge.s_second[-index.s,]
+abalone_ridge.v_second <- abalone_ridge.s_second[index.s,]
+```
+### Additional Methods: PCR
+```{r}
+#first order
+pca<-prcomp(abalone_ridge.t[,1:9],center=TRUE,scale. = TRUE)
+abalone_pca_quant.t <- as.data.frame(as.matrix(abalone_ridge.t[,1:9])%*%pca$rotation)
+abalone_pca.t<-cbind(abalone_pca_quant.t,log_age=abalone.t[,9])
+model.pca <- lm(log_age ~ .,data = abalone_pca.t[,-c(8,9)])
+summary(model.pca)
+tranmatrix <- as.matrix(summary(model.pca)$coefficient[-1,1])
+beta.pca <- t(tranmatrix)%*%t(pca$rotation[,c(1:7)])
+beta.pca
+abalone_pca_quant.v <- as.data.frame(as.matrix(abalone_ridge.v[,1:9])%*%pca$rotation)
+mspe_pcr_first<-mean((predict(model.pca,abalone_pca_quant.v )-abalone_ridge.v[,10])^2)
+
+
+#second order
+pca_second<-prcomp(abalone_ridge.t_second[,1:51],center=TRUE,scale. = TRUE)
+abalone_pca_quant.t_second <- as.data.frame(as.matrix(abalone_ridge.t_second[,1:51])%*%pca_second$rotation)
+abalone_pca.t_second<-cbind(abalone_pca_quant.t_second,log_age=abalone.t$log_age)
+model.pca_second <- lm(abalone.t$log_age ~., data=abalone_pca.t_second[,-c(23:51)])
+summary(model.pca_second)
+tranmatrix_second <- as.matrix(summary(model.pca_second)$coefficient[-1,1])
+beta.pca_second <- t(tranmatrix_second)%*%t(pca_second$rotation[,c(1:22)])
+beta.pca_second
+abalone_pca_quant.v_second <- as.data.frame(as.matrix(abalone_ridge.v_second[,1:51])%*%pca_second$rotation)
+mspe_pcr_second<-mean((predict(model.pca_second,abalone_pca_quant.v_second )-abalone_ridge.v[,10])^2)
+```
+
+### Additional Methods: Ridge
+```{r}
+par(mfrow=c(1,2))
+X <- as.matrix(abalone_ridge.t[,1:9])
+Y <- abalone_ridge.t[,10]
+modelc1 <- cv.glmnet(X,Y,alpha = 0,family = "gaussian",type.measure="mse")
+plot(modelc1)
+model1 <- glmnet(X,Y,alpha = 0,family = "gaussian")
+plot(model1,xvar="lambda",label=TRUE)
+#1se
+model_ridge <- glmnet(X,Y,alpha = 0,family = "gaussian",lambda = modelc1$lambda.1se)
+betahat_ridge <- coef(model_ridge)
+Yhat_ridge <- predict(model_ridge,as.matrix(abalone_ridge.v[,-10]))
+Y.v <- as.matrix(abalone_ridge.v[,10])
+e_ridge <- Y.v-Yhat_ridge
+mspe_ridge <- mean(e_ridge^2)
+#min
+model_ridge_min <- glmnet(X,Y,alpha = 0,family = "gaussian",lambda = modelc1$lambda.min)
+betahat_min <- coef(model_ridge_min)
+Yhat_ridge_min <- predict(model_ridge_min,as.matrix(abalone_ridge.v[,-10]))
+e_ridge_min <- Y.v-Yhat_ridge_min
+mspe_ridge_min <- mean(e_ridge_min^2)
+mspe_ls <- mean((predict.lm(model_chosen,abalone.v_c)-abalone.v_c$log_age)^2)
+```
+
+
+### Additional Methods: Lasso
+```{r}
+#test whether variable is significant individually
+tvalue <- {}
+i=2
+par(mfrow=c(1,1))
+for (i in 1:51) {
+  tmodel <- lm(abalone.t$log_age~abalone_ridge.t_second[,i])
+  stmodel <- summary(tmodel)
+  stmodel$coefficients[2,4]
+  tvalue[i] <- stmodel$coefficients[2,4]
+}
+tvalue
+which(tvalue >= 0.05)
+#lasso
+par(mfrow=c(1,2))
+XS <- as.matrix(abalone_ridge.t_second[,-52])
+modelc2 <- cv.glmnet(XS,Y,alpha = 1,family = "gaussian",type.measure="mse")
+plot(modelc2)
+model2 <- glmnet(XS,Y,alpha = 1,family = "gaussian")
+plot(model2,xvar="lambda",label=TRUE)
+#1se
+model_lasso.S <- glmnet(XS,Y,alpha = 1,family = "gaussian",lambda = modelc2$lambda.1se)
+betahat_lasso.S <- coef(model_lasso.S)
+Yhat_lasso.S <- predict(model_lasso.S,as.matrix(abalone_ridge.v_second[,-52]))
+e_lasso.S <- Y.v-Yhat_lasso.S
+mspe_lasso.S <- mean(e_lasso.S^2)
+#min
+model_lasso_min.S <- glmnet(XS,Y,alpha = 1,family = "gaussian",lambda = modelc2$lambda.min)
+betahat_lasso_min.S <- coef(model_lasso_min.S)
+Yhat_lasso_min.S <- predict(model_lasso_min.S,as.matrix(abalone_ridge.v_second[,-52]))
+e_lasso_min <- Y.v-Yhat_lasso_min.S
+mspe_lasso_min <- mean(e_lasso_min^2)
+```
+
+### Additional Methods: Elastic Net Regularization
+```{r}
+par(mfrow=c(1,2))
+modelc3 <- cv.glmnet(XS,Y,alpha = 0.5,family = "gaussian",type.measure="mse")
+plot(modelc3)
+model3 <- glmnet(XS,Y,alpha = 0.5,family = "gaussian")
+plot(model2,xvar="lambda",label=TRUE)
+#1se
+model_en.S <- glmnet(XS,Y,alpha = 0.5,family = "gaussian",lambda = modelc3$lambda.1se)
+betahat_en.S <- coef(model_en.S)
+Yhat_en.S <- predict(model_en.S,as.matrix(abalone_ridge.v_second[,-52]))
+e_en.S <- Y.v-Yhat_en.S
+mspe_en.S <- mean(e_en.S^2)
+#min
+model_en_min.S <- glmnet(XS,Y,alpha = 1,family = "gaussian",lambda = modelc3$lambda.min)
+betahat_en_min.S <- coef(model_en_min.S)
+Yhat_en_min.S <- predict(model_en_min.S,as.matrix(abalone_ridge.v_second[,-52]))
+e_en_min <- Y.v-Yhat_en_min.S
+mspe_en_min <- mean(e_en_min^2)
+```
+
+### Conclusion and Discussion
+```{r}
+cbind(mspe_ls,mspe_pcr_first,mspe_pcr_second,mspe_ridge_min,mspe_lasso_min,mspe_en_min)
+```
+
+
+
+
+
