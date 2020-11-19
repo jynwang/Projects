@@ -1,0 +1,501 @@
+---
+title: "Analyze the Effect of Class Type on First Grade Math Scores Using Two-way ANOVA"
+output:
+  pdf_document: 
+    latex_engine: xelatex
+    df_print: paged
+    number_sections: yes
+---
+
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 18px;
+  }
+</style>
+
+```{r , include=FALSE}
+knitr::opts_chunk$set(echo=FALSE,message=FALSE,warning=FALSE)
+options(width = 120)
+```
+
+
+```{r, include=FALSE}
+library(AER)
+library(knitr)
+library(ggplot2)
+library(foreign)
+library(table1)
+library(dplyr)
+library(kableExtra)
+library(haven)
+library(ggpubr)
+
+setwd(getwd())
+data<-read.spss('./STAR_Students.sav',to.data.frame = TRUE)
+t_statistics <- read.csv("./t_statistics.txt", sep="") #FEP test statistics 1000000
+```
+
+# Introduction
+This study is based on the Project Student-Teacher Achievement Ratio (STAR) public access data set, assessing the effect of class size on the performance of teachers. The full data set contains 11,601 observations on 379 variables. The Project STAR data set contains data on test scores, treatment groups, and student and teacher characteristics over the four years of the experiment, from the academic year 1985–1986 to the academic year 1988–1989. All students were randomly assigned to one of three class types, including small class, regular class, and regular-with-aide class, and all teachers and students were also randomly assigned to the classes. The questions we were interested in are:
+
+* Whether there is an association between class types and teachers’ teaching quality
+* Whether we could make causal inference between class types and teachers’ teaching quality
+
+To study these problems, we first defined a measure of teachers' teaching quality. The measure we chose is the median math scores of all students taught by each teacher. Then, we analyzed the data by using two-way ANOVA. After the model assumptions justified, Tukey’s test was applied and it showed that the differences between small class and regular class, small class and regular with aid calss were significant; but the difference between and regular calss and regular with aid calss was not significant. By further applying potential outcomes framewrok and Fish's Exact P-value to do causal inference, we draw the conclusion that class size does have an effect on first-grade teachers’ teaching quality. 
+
+# Descriptive Analysis
+
+## Data Preprocessing
+As class types, teacher ID, school ID, and first-grade math scaled scores are the key variables we are interested in, we extract them from the full dataset. Other variables concerning teachers' characteristics have remained also. We dropped the observations if any one of the key variables were missing. 
+
+## Data Summary
+For the first grade, the dataset has three types of class and 339 different teachers. The math score varies from 404 to 676, with a mean score of 530.7 and a median of 529, as shown in Table 1.
+
+<center> 
+
+Table 1: summary statistics for the variables of interest
+
+|   |          star    |  teacher ID  |     math     |
+|:--:|:-----------------|:------------|:-------------|
+|   |regular     :2507 |Min    :  11203804 |Min.   :404.0 |
+|   |small       :1867 |1st Qu.:  17029508 |1st Qu.:500.0 |
+|   |regular+aide:2224 |Median :  21252210 |Median :529.0 |
+|   |                  |Mean   :  20972685 |Mean   :530.5 |
+|   |                  |3rd Qu.:  24475512 |3rd Qu.:557.0 |
+|   |                  |Max.   :  26494510 |Max.   :676.0 |
+
+</center>
+
+
+## Measuring Teaching Quality 
+
+To answer the questions of interest, we first defined measurement for teaching quality. We used the median math scores of all students taught by each teacher as indictor to represent the teaching quality. In project star, each teacher only taught one class type, and each student was only taught by one teacher. Thus, this measure is well defined. We chose the median math scores because the plots of the distributions of students’ math score under each teacher show the distributions are not normal and have some extreme values.
+```{r, results = "asis", message=FALSE, echo=FALSE, include=FALSE}
+star <- data
+nstar1 <- star[which(star$FLAGSG1=='YES'),]
+nstar1 <- nstar1[which(nstar1$flagg1=='YES'),]
+star1g <- nstar1[,c(1,27,55:62,71)]
+star1gn <- star1g[-which(is.na(star1g$g1tmathss)),]
+sapply(star1gn, class)
+star1gn$g1schid <- as.factor(star1gn$g1schid)
+star1gn$g1tchid <- as.factor(star1gn$g1tchid)
+for (i in 1:dim(star1gn)[2]) {
+  print(names(star1gn)[i])
+  print(sum(is.na(star1gn[,i])))
+}
+for (i in 1:length(levels(star1gn$g1tchid))) {
+  if (sum(is.na(star1gn[star1gn$g1tchid==levels(star1gn$g1tchid)[i],])) >0){
+    print(levels(star1gn$g1tchid)[i])
+    print(sum(is.na(star1gn[star1gn$g1tchid==levels(star1gn$g1tchid)[i],])))
+  }
+}
+star1gna <- group_by(star1gn,g1tchid)
+star_data_s <- summarise(star1gna,count = n(), g1tmathss=median(g1tmathss))
+star_data_mean <- summarise(star1gna, g1tmathss_mean=mean(g1tmathss))
+tdata <- star1gna[!duplicated(star1gna$g1tchid),][,-c(1,11)]
+data_anova <- merge(star_data_s,tdata, by="g1tchid")
+data_anova <- merge(star_data_mean, data_anova, by="g1tchid")##also add the mean
+```
+
+```{r, fig.cap = 'Math Score Distribution of Selected Teachers',fig.height = 2.2,fig.pos='H'}
+par(mfrow=c(1,5))
+hist(star1gn[which(star1gn$g1tchid=="24477614"),"g1tmathss"],main="Teacher ID: 24477614",ylab='',xlab="1st grade math score",cex.main=0.9,cex.lab=0.9,cex.axis = 0.9)
+hist(star1gn[which(star1gn$g1tchid=="20345704"),"g1tmathss"],main="Teacher ID: 20345704",ylab='', xlab="1st grade math score",cex.main=0.9,cex.lab=0.9,cex.axis = 0.9)
+hist(star1gn[which(star1gn$g1tchid=="21856205"),"g1tmathss"],main="Teacher ID: 21856205", ylab='',xlab="1st grade math score",cex.main=0.9,cex.lab=0.9,cex.axis = 0.9)
+hist(star1gn[which(star1gn$g1tchid=="11203804"),"g1tmathss"],main="Teacher ID: 11203804", ylab='',xlab="1st grade math score",cex.main=0.9,cex.lab=0.9,cex.axis = 0.9)
+hist(star1gn[which(star1gn$g1tchid=="17029508"),"g1tmathss"],main="Teacher ID: 17029508", ylab='',xlab="1st grade math score",cex.main=0.9,cex.lab=0.9,cex.axis = 0.9)
+```
+
+```{r,results = "asis", message=FALSE, echo=FALSE, include=FALSE}
+dat1 <- data[, c("g1tmathss", "g1classtype", "g1tchid", "g1thighdegree", "g1tcareer","g2tyears", "g1trace",  "g1schid")]
+names(dat1) <- c("math", "star", "teacherid", "degree", "ladder", "experience","tethnicity", "g1schid" )
+dat1 <- dat1[!is.na(dat1$math), ]
+dat1 <- dat1[!is.na(dat1$star), ]
+
+nam <- c("star", "read", "math", "lunch", "school", "degree", "ladder","experience", "tethnicity", "system", "schoolid");data("STAR")
+lev <- c("k", "1", "2", "3")
+## 2. reshaping
+star <- reshape(STAR, idvar = "id", ids = row.names(STAR),times = lev, timevar = "grade", direction = "long",varying = lapply(nam, function(x) paste(x, lev, sep = ""))) #46392 obs
+## 3. improve variable names and type
+names(star)[5:15] <- nam
+star$id <- factor(star$id)
+star$grade <- factor(star$grade, levels = lev, labels = c("kindergarten", "1st", "2nd", "3rd"))
+
+
+data_c<-star[!apply(star[,5:15],1,function(x) all(is.na(x))),]  #26797 obs
+
+grade1 <- data_c[ which(data_c$grade=='1st'),]
+dat <- grade1[, c("star", "math", "degree", "ladder","experience", "tethnicity", 
+                  "system", "schoolid")] # the data set for further analysis.
+dat <- na.omit(dat) # 6537 Obs.
+```
+
+```{r}
+ dat2 <- dat1[, c("star", "teacherid", "math")]
+#kable(summary(dat2))
+
+```
+
+The violin plot compares the median and means math scores of all students taught by each teacher between different class types. We observed that the median math scores have a lower variance with fewer outliers compares with the mean math scores by different class types. This comparison result gives us the intuition to use the median instead of mean as the measure of teacher level performance.
+
+```{r fig.height = 2, fig.cap = "Violin Plot of Teaching Performance by Class Type",  fig.hold='hold',out.width = '.99\\linewidth',fig.align = "center",fig.pos='H'}
+par(mfrow=c(1,3))
+copy_data_anova <- data_anova
+names(copy_data_anova)[names(copy_data_anova) == "g1classtype"] <- "ClassType"
+
+library(wesanderson)
+theme_set(theme_pubr())
+p1 <- ggplot(copy_data_anova, aes(x=ClassType, y=g1tmathss, fill=ClassType)) + 
+    geom_violin()+ 
+    geom_boxplot(width=0.4) + scale_fill_grey(start=1.0, end=0.7) + theme_classic()+ 
+  xlab("Xlabel") + ylab("Math Scores") + theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+geom_jitter(width=0.1,alpha=0.2)
+
+p2<-ggplot(copy_data_anova, aes(x=ClassType, y=g1tmathss_mean, fill=ClassType)) + 
+  geom_violin()+
+    geom_boxplot(width=0.4) + scale_fill_grey(start=1.0, end=0.7) + theme_classic()+ 
+  xlab("Xlabel") + ylab("Math Scores") + theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) + geom_jitter(width=0.1,alpha=0.2)
+    
+ggarrange(
+  p1, p2, labels = c("medium", "mean"),
+  common.legend = TRUE, legend = "bottom",font.label = list(size = 9),hjust = c(0,-0.5))
+```
+
+
+<!-- ```{r,fig.cap='Box plot for math score',fig.pos='H',out.width = '.99\\linewidth',fig.height=3,fig.align="center"} -->
+<!-- plot(math~star, dat1,cex.lab=0.8,cex.axis=0.8) # box plot for math score -->
+<!-- ``` -->
+
+Besides, the median scores of all students taught by each teacher by different class types is shown in the boxplot of left panel in Figure 2. The difference in terms of the median score is not significant between regular calss and regular-with-aide class. Nevertheless, the differences between small class and regular class, small class and regular-with-aide class are significant.
+
+```{r, results = "asis", message=FALSE, echo=FALSE, include=FALSE}
+#library(foreign)
+#library(dplyr)
+#library(table1)
+star <- data
+nstar1 <- star[which(star$FLAGSG1=='YES'),]
+nstar1 <- nstar1[which(nstar1$flagg1=='YES'),]
+star1g <- nstar1[,c(1,27,55:62,71)]
+star1gn <- star1g[-which(is.na(star1g$g1tmathss)),]
+sapply(star1gn, class)
+star1gn$g1schid <- as.factor(star1gn$g1schid)
+star1gn$g1tchid <- as.factor(star1gn$g1tchid)
+for (i in 1:dim(star1gn)[2]) {
+  print(names(star1gn)[i])
+  print(sum(is.na(star1gn[,i])))
+}
+for (i in 1:length(levels(star1gn$g1tchid))) {
+  if (sum(is.na(star1gn[star1gn$g1tchid==levels(star1gn$g1tchid)[i],])) >0){
+    print(levels(star1gn$g1tchid)[i])
+    print(sum(is.na(star1gn[star1gn$g1tchid==levels(star1gn$g1tchid)[i],])))
+  }
+}
+star1gna <- group_by(star1gn,g1tchid)
+star_data_s <- summarise(star1gna,count = n(), g1tmathss=mean(g1tmathss))
+tdata <- star1gna[!duplicated(star1gna$g1tchid),][,-c(1,11)]
+data_anova <- merge(star_data_s,tdata, by="g1tchid")
+```
+
+```{r, results = "asis", message=FALSE, echo=FALSE, include=FALSE}
+length(levels(data_anova$g1schid))
+full_model <- lm(g1tmathss~g1classtype+g1schid+g1classtype*g1schid,data=data_anova)
+afmodel <- anova(full_model)
+reduced_model<-lm(g1tmathss~g1classtype+g1schid,data=data_anova)
+#summary(reduced_model)
+amodel <- lm(g1tmathss~g1schid+g1classtype,data=data_anova)
+an<- anova(amodel)
+armodel <- anova(reduced_model)
+mean(data_anova$g1tmathss)
+levels(data_anova$g1classtype)
+mean(data_anova[which(data_anova$g1classtype=="SMALL CLASS"),][,"g1tmathss"])-mean(data_anova$g1tmathss)
+mean(data_anova[which(data_anova$g1classtype=="REGULAR CLASS"),][,"g1tmathss"])-mean(data_anova$g1tmathss)
+mean(data_anova[which(data_anova$g1classtype=="REGULAR + AIDE CLASS"),][,"g1tmathss"])-mean(data_anova$g1tmathss)
+```
+
+```{r, results = "asis", message=FALSE, echo=FALSE, include=FALSE}
+library(rticles)
+f <- (afmodel[3,2]/afmodel[3,1])/(afmodel[4,2]/afmodel[4,1])
+1-pf(f,afmodel[3,1],afmodel[4,1])
+```
+
+
+# Main Analysis
+In this experiment, nearly all schools had at least one class of each type, and teachers were randomly assigned to classes, so it is a randomized block design. Class types are treatments; schools are blocks. The median math scores of all students taught by each teacher is treated as the response variable because we used it to measure the performance of teacher.
+
+To analyse the question whether there is an association between class types and teachers’ teaching quality, the most common analysis method is two-way ANOVA. There are two different kinds of two-way ANOVA model. One assumes that the effects on the outcome of a change in one variable may not depend on the level of the other variable (additive model); another one assumes that it may depend on the level of the other variable (interaction model). 
+
+In this report, we mainly focus on the effects of class types, and there are 76 schools, it is more reasonable to implement the additive model. However, if the interaction terms do have a significant impact on the first-grade math scaled scores, it may cause some problems concerning model diagnostics and hypothesis testings. Thus, we will also test whether interaction terms should be included in the model. At the end of this part, we will do model diagnostics and hypothesis testing.
+
+## Two-way ANOVA Model
+
+Interaction model:
+$$Y_{{i,j,k}}=\mu +\alpha _{i}+\beta _{j}+\gamma _{{i,j}}+\epsilon_{i,j,k}$$
+Additive model:
+$$Y_{{i,j,k}}=\mu +\alpha _{i}+\beta_{j}+\epsilon_{i,j,k}$$
+
+$i$ denotes the index of class types. 1 denotes small class; 2 denotes regular class; 3 denotes regular class with aide.$j$ denotes the index of school. $j =1,2\cdots,76$.  
+$k$ denotes the index over experimetnal units in the treatment group $(i, j)$. $k=1,2,\cdots,n_{i,j}$.  
+$Y_{i,j,k}$ denotes the outcome of the kth experimental unit in the treatment group $(i,j)$  
+$\mu$ denotes the overall mean.  
+$\alpha_{i}$ denotes an adjustment for level i of class types. $\beta_j$ denotes an adjustment for level j of schools.  
+$\gamma_{i,j}$ denotes an additional adjustment that takes into account both i and j.  
+$\varepsilon_{i,j,k}$ denotes random errors.
+
+## Model Assumptions
+\begin{itemize}
+\item Independence assumption: error terms are independent with each other. In this experiment, we assume that first-grade math scaled scores of students taught by one teacher will not be affected by other teachers.
+\item Normality assumption: error terms are normally distributed.
+\item Equal variance assumption: variances of error terms are all equal. $\sigma^2$ denotes variances of error terms.
+\end{itemize}
+Thus, error terms are independent and identically distributed random variables and are distributed as $Normal(0,\sigma^2).$  
+
+Since the experiment is a stratified randomized experiment, the independence assumption is reasonable. The normality assumption and equal variances assumption will be tested in the model diagnostics part.
+
+## Fitted Model
+
+Since we are mainly interested in the effects of class types, we only report the fitted value of $\mu,\alpha_1,\alpha_2$, and $\alpha_3$. $\hat{\mu}=531.58$, $\hat{\alpha}_1=7.40$, $\hat{\alpha}_2=-6.18$, and $\hat{\alpha}_3=-2.08$. Other estimators are listed in Appendix.
+
+## Interactions Terms
+
+In this part, we will employ F-test to analyze whether interaction terms should be included in the model.For these test, the null hypothesis is,
+$$H_0: \text{In interaction model, }\gamma _{{i,j}}=0, \text{ for } i=1,2,3; j=1,2,\cdots,76,$$
+against the alternative hypothesis
+$H_a: \text{In interaction model, interaction terms are not all equal to zero.}$
+The test statistics is F ratio:
+$$F^* = \frac{\frac{SSE(A)-SSE(I)}{df_A-df_I}}{\frac{SSE(I)}{df_I}}$$
+$SSE(A)$ denotes the error sum of squares(SSE) of the intreaction model and SSE(I) denotes SSE of additive model; $df_A$ denotes the degrees of freedom of $SSE(A)$ and $df_I$ denotes the degrees of freedom of $SSE(I)$.  
+At significant level $\alpha$, under $H_0$, $F^*\sim F(df_A-df_I,df_I)$. Thus, if $P(F(df_A-df_I,df_I)>F^*) < \alpha$, the null hypothesis is rejected at level $\alpha$. In the project, $P(F(df_A-df_I,df_I)>F^*)=0.7056$ and $H_0$ is rejected at significant level 0.05. Therefore, it is reasonable to use additive model.
+
+## Model Diagnostics
+
+```{r,fig.cap = "Left panel: Residual versus Fitted Values. Right panel: Q-Q Plot with Residuals",fig.align="center",fig.height=3,fig.pos='H'}
+par(mfrow=c(1,2))
+plot(reduced_model,which = 1)
+plot(reduced_model,which = 2)
+#library(car)
+#leveneTest(g1tmathss ~ g1classtype*g1schid, data = data_anova)
+```
+
+According to residual versus fitted values, there should be no relationship between the size of the residuals and the fitted values. Equal variance assumption holds. According to the Q-Q plot, there is no severe indication of non-normality.
+
+## Hypothesis Testing
+
+### F-test for Factor Effects
+
+For a simple explanation, $SSTR$ denotes the sum of squares of variance of class type and $MSTR$ denotes mean of the sum of squares of the variance of class type; Similarly, $SSBL$ and $MSBL$ denotes the sum of squares of variance of school Id and mean of the sum of squares of the variance of school Id respectively.  
+Firstly, We want to explore whether there are main effects for class type and school Id.  
+
+\textbf{Test the class type main effect}  
+We test the null hypothesis.
+$$H_0:\alpha_1=\alpha_2=\alpha_3=0$$
+against the alternative $H_a: \text{Not all } \alpha_{i} \text{'s  equal zero}$  
+The test statistics is $F^*=\frac{MSTR}{MSE}$. Under $H_0$, $F^* \sim F(0.95,2,150)$. $F^*=21.72$, $P_{value}=1.87*10^{-09}$. Thus, at significance level $\alpha=0.05$, $H_0$ is rejected. It is likely that class types affect the math scores in first-grade.
+
+\textbf{Test the school ID main effect}
+
+```{r,results = "asis", message=FALSE, echo=FALSE, include=FALSE}
+armodel
+(a <- armodel[2,3]/armodel[3,3])
+(b <- an[2,3]/an[3,3])
+an
+1-pf(a,75,150)
+1-pf(b,2,150)
+1-pf(a,75,216,lower.tail = FALSE)
+an
+pf(21.72984,2,216,lower.tail = FALSE)
+(b <- an[2,3]/an[3,3])
+1-pf(a,75,78)
+1-pf(b,2,78)
+```
+We test the null hypothesis
+$$H_0:\beta_1=...=\beta_{76}=0$$
+against the alternative $H_a: \text{Not all } \beta_{j} \text{'s  equal zero}$  
+The test statistics is $F^*=\frac{MSBL}{MSE}$. Under $H_0$, $F^* \sim F(0.95,75,216)$. $F^*=6.59$; $P_{value}=1.17*10^{-30}$. Thus, at significance level $\alpha=0.05$, $H_0$ is rejected, which means it is likely that school Id affects the math scores in first-grade.
+
+### Pairwise Comparison
+
+We further construct simultaneous confidence intervals for all pairwise differences and run the simultaneous testing for difference among the means of class types. Tukey's test compares all possible pairs of means simultaneously, which suits our purpose in this project.  
+The null hypothesis is
+$$H_{ii',0}: D_{ii'}=\mu_i-\mu_{i'}=0$$
+against the alternative$H_{ii',a}: D_{ii'}=\mu_i-\mu_{i'} \neq 0$  
+This null hypothesis could be rejected if 0 is not included in the confidence interval of $D_{ii'}$.
+
+```{r, results = "asis", message=FALSE, echo=FALSE, include=FALSE}
+tuk<-TukeyHSD(aov(g1tmathss~g1classtype+g1schid,data=data_anova), "g1classtype", ordered = FALSE, conf.level = 0.95)
+```
+
+```{r,fig.cap = "Tuckey's pairwise comparison",fig.align="center", echo=FALSE,fig.height=2.5,fig.pos = 'H'}
+par(mar = c(4, 16, 4, 2) )
+plot(TukeyHSD(aov(g1tmathss~g1classtype+g1schid,data=data_anova), "g1classtype",ordered = FALSE, conf.level = 0.95),  las=1,col = "red",cex.main=0.8,cex.axis=0.8,cex.lab=0.8)
+```
+
+As we could see from Figure 4, one of the three confidence intervals contains zero; it's regular-with-aide class compared to the regular class. The other two confidence intervals don't contain zero. Therefore, at significance level 0.05, we could reject the hypothesis and draw the conclusion that the differences between small class and regular class, small class and regular-with-aid class were significant; but the difference between and regular calss and regular-with-aid class was not significant.  
+
+# Causaul Inference
+
+As shown in Figure 4, the confidence interval of regular-with-aide – regular class contains zero, which means their median math score difference is not significant, and the differences are significant for the other two pairs. Since the math score difference is not significant, we combine regular-with-aide class and regular class together as new regular class. We treat regular class as control and small class as treatment to make the causal inference.
+
+## Potential Outcomes Framework
+
+In this project, we treat the experiment as a randomized block design and analyze the impact of school and class types on first-grade math scaled scores. In a randomized block design, it employs blocking to systematically eliminate the effect of a variable on the statistical comparisons among treatments. Randomized block design could better ensure the balance of treatment groups concerning various combinations of prognostic variables. We could apply the potential outcome framework to make a causal inference since the SUTVA holds in this circumstance: 
+
+* No interference: in the STAR project, each teacher only taught one class, and one teacher only taught each student. Thus the performance of the teacher is not affected by other teachers. Thus no interference assumption holds. 
+* Single version of each treatment level: consider the design of the STAR project, class types were deﬁned under the same criteria across all schools, so treatments are stable. 
+* Ignorability: The design of this experiment is a stratified randomized experiment; teachers and students were radomly assigned. The ignorability assumption holds.
+
+Based on the results of the new model, class types affect the performance of teachers.
+
+## Fisher's exact p-value(FEP)
+
+Another method we introduce is Fisher's exact p-value(FEP). In the FEP framework, the potential outcomes are considered fixed, and the randomness only comes from the assignment mechanism. The sharp null hypothesis of this method is that there is no individual treatment effect. Under the null hypothesis, SUTVA no interference assumption automatically holds, and all potential outcomes are known. 
+In this project, as mentioned above, we combined regular class and regular+aide as a new regular class, set as the control(0), and small class as treatment(1). To be specific, there were 76 schools in total and 339 teachers, among which 124 were for small classes and 215 for a new regular class. The outcomes we focused on were the median math scores of all students taught by each teacher. We have the following Fisher's sharp null hypothesis:
+$$H_0:Y_K(0) = Y_K(1),\text{  } K=1,2,\dots 339$$
+where $Y_K(0)$ and $Y_K(1)$ being the median math score of all students under the teacher $K$ of new regular and small class respectively.  
+
+The statistic we chose in this approach is the weighted-average of 76 within-school average differences between small and regular median math scaled score.
+$$T^{obs} = \left|\sum_{m=1}^{M}\frac{N(m)}{N}\left(\bar Y_1^{obs}{(m)}-\bar Y_0^{obs}{(m)}\right) \right|$$
+$M$ denote the number of strata, in our case, the number of schools which is 76, $m = 1,2,\dots M$.  
+$N(m)$ denotes the number of classes in school $m$. $N$ denotes the total number of classes, $N = \sum_{m=1}^{M}N(m)$.  
+$\bar Y_1^{obs}{m}$ and $\bar Y_2^{obs}{m}$ denote the average of observed median math score for small and regular classes in school $m$ respectively.
+
+
+```{r}
+library(dplyr)
+by_type <- dat1 %>% group_by(g1schid,star,teacherid)
+t<-by_type %>% summarise(
+ n()
+)
+summ<-table(t$g1schid,t$star)
+filter_sch <-rownames(summ)
+#no filtered data
+filter_data<-dat1[(dat1$g1schid %in% filter_sch)&(!is.na(dat1$math)),]
+filter_data$star[filter_data$star=='REGULAR + AIDE CLASS']<-'REGULAR CLASS'
+filter_data$star = factor(filter_data$star)
+
+t<-filter_data%>% group_by(g1schid,star,teacherid) %>% summarise(n())
+summ<-table(t$g1schid,t$star)
+
+#class median score
+by_type <- filter_data %>% group_by(g1schid,star,teacherid)
+median_score_class<-by_type %>% summarise(median = median(math))
+
+class_median = list()
+class_small = list()
+class_total = list()
+for(name in filter_sch)
+{
+  class_median[[name]]<- median_score_class$median[median_score_class$g1schid == name]
+  class_small[[name]] <- length(median_score_class$star[median_score_class$star=='SMALL CLASS' & median_score_class$g1schid == name])
+  class_total[[name]] <- length(median_score_class$g1schid[median_score_class$g1schid ==name])
+}
+
+```
+
+```{r}
+N<-summ #%no filter
+rownames(N) <- c(1:76)
+colnames(N) <-c(1,0)
+lamda <-rowSums(N)/sum(N)
+#lamda2 <- (N[,1]*N[,2])/(sum(N)*rowSums(N))
+avg_score<-median_score_class %>% group_by(g1schid,star) %>% summarise(m = mean(median))
+y_bar<-cbind(small = avg_score$m[avg_score$star=='SMALL CLASS'],regular = avg_score$m[avg_score$star=='REGULAR CLASS'])
+rownames(y_bar)<-c(1:76)
+test_statistic <- abs(sum((y_bar[,1]-y_bar[,2])*lamda))
+```
+
+
+```{r,echo=FALSE, include=FALSE,eval=FALSE}
+#find p-value using numeric methods, t_statistics.txt saved values simulated beforehand
+t_statistics = numeric()
+for(k in 1:1000000){
+S = 0
+for(i in 1:76){
+  n = class_total[[i]]
+  n_small = class_small[[i]]
+  n_assign = choose(n,n_small)
+  sampl = sample(1:n_assign,1)
+  combination = combn(1:n,n_small)
+  small_median = class_median[[i]][combination[,sampl]]
+  S = S+ lamda[i]*(mean(small_median)-(sum(class_median[[i]])-sum(small_median))/(n-n_small))
+}
+t_statistics=c(t_statistics,abs(S))
+}
+```
+
+```{r}
+t_statistics = t_statistics$x #use the data already simulated
+pvalue = round(1-rank(c(test_statistic,t_statistics))[1]/(length(t_statistics)+1),digits = 5)
+```
+
+
+```{r,fig.cap = "Approximate Randomization Distribution",fig.align="center", echo=FALSE,fig.height=3.5,fig.pos = 'H'}
+hist(t_statistics,breaks = 30,xlab = 'Test Statistic under the Null',main="Approximate Randomization Distribution",cex.main=0.8,cex.lab=0.8,cex.axis=0.8)
+abline(v = quantile(t_statistics, seq(0,1,by=0.05))[20],col="red", lwd=2, lty=2)
+text(x=quantile(t_statistics, seq(0,1,by=0.05))[20]-1,y=120000,labels='95%',col="red")
+text(x=quantile(t_statistics, seq(0,1,by=0.05))[20]-1,y=105000,labels=paste('T*=',round(quantile(t_statistics, seq(0,1,by=0.05))[20],digits = 2)),col="red")
+text(x=quantile(t_statistics, seq(0,1,by=0.05))[20]+1,y=120000,labels='T(obs)>T*',col="red")
+```
+
+The realized value of the test statistics is `r round(test_statistic,digit=2)`.  
+By exhausting all possible assignments of teachers, the distribution of $T$ arises. The exact p-value is the proportion of test statistics in this randomization distribution that are as extreme as $T^{obs}$.   
+However, in our case, the number of possible assignments is very large. Enumerating every possible assignment is computationally challenging, thus, we have to use numerical methods to approximate the p-value for the FEP approach. With 1000000 simulate random assignments, we have distribution in Figure 5. The approximate p-value is `r 1-rank(c(test_statistic,t_statistics))[1]/(length(t_statistics)+1)`, which is the probability of finding the value of observed statistics under randomization distribution above, thereby suggesting that teachers with small classes had different performance than teachers with other types of classes.
+
+
+\newpage
+
+# Appendix
+
+## Appendix 1  
+The scatter plot shows the scatter plots for all the variables. The class types assigned to teachers are even. The second type, a.k.a. the small type class students are more unlikely to obtain lower math scores. In general, only several students, of course, and their teachers obtain scores larger than 600. The scores mainly lie in the range from 420 to 550.
+```{r fig.cap = "Scatter plot for all variables", fig.align = "center",fig.pos = 'H'}
+pairs(dat,pch = 16, main = "Scatter plot for all variables") # scatter plot.
+```
+
+## Appendix 2: Fitted two-way ANOVA model
+
+```{r}
+summary(reduced_model)
+```
+
+## Appendix 3: Tukey's confidence intervals for pairwise comparisons
+
+<center> 
+
+Table 2: Tukey's confidence intervals for pairwise comparisons
+
+|   |          Regular - Small    |  Regular + AIDE - Small  |     Regular + AIDE - Regular|
+|:--:|:-----------------|:------------|:-------------|
+| Confidence Interval  |(-18.66, -8.50) |(-14.75, -4.21) |(-1.26, 9.45) |
+
+</center> 
+
+
+# Reference
+
+1. Tennessee's Student Teacher Achievement Ratio (STAR) project https://doi.org/10.7910/DVN/SIWH9F
+2. Causaul Inference for Statistics Social and Biomedical Sciences An Introduction Chapter 9
+3. https://www2.stat.duke.edu/courses/Spring14/sta320.01/Class5.pdf
+
+
+
+***
+
+Team ID: Course project group 13
+
+Name (responsibilities): Zheng Gu (Background, Descriptive Analysis)
+
+Name (responsibilities): Jieyun Wang ( Causal Inference, Polish Report )
+
+Name (responsibilities): Siyao Wang (Model Fitting, Remedial Measures for Nonnormality)
+
+Name (responsibilities): Zhi Zhang (Hypothesis Testing,Model Diagnostics)
+
+Github: https://github.com/jynwang/STA207Project.git
+
+***
+
+
